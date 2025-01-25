@@ -12,11 +12,14 @@ export default class Bernoullis {
         if (!this._pipeSection) throw Error('PipeSection must be supplied.');
     }
 
-    execute = (isImperial: boolean = true): Array<Array<number>> => {
+    execute = (
+        flowRates: Array<number>,
+        isImperial: boolean = true
+    ): Array<Array<number>> => {
         const relativeRoughness: number =
             this._pipeSection.absoluteRoughness / this._pipeSection.diameter;
 
-        return this.generateFlowRange().map((flowRate: number) => {
+        return flowRates.map((flowRate: number) => {
             const tdh = this.calculateTDH(
                 isImperial,
                 flowRate,
@@ -39,7 +42,7 @@ export default class Bernoullis {
             flowRate,
             relativeRoughness
         );
-        const minorLosses = this.calculateMinorLosses(isImperial);
+        const minorLosses = this.calculateMinorLosses(flowRate, isImperial);
 
         return (
             staticHead + pressureHead + velocityHead + majorLosses + minorLosses
@@ -86,17 +89,20 @@ export default class Bernoullis {
                 this.calculateReynoldsNumber(flowRate)
             ) *
                 (this._pipeSection.length / this._pipeSection.diameter) *
-                this._pipeSection.targetFlowRate ** 2) /
+                flowRate ** 2) /
             ((2 * gravity * math.pi * this._pipeSection.diameter ** 2) / 4)
         );
     };
 
-    private calculateMinorLosses = (isImperial: boolean = true): number => {
+    private calculateMinorLosses = (
+        flowRate: number,
+        isImperial: boolean = true
+    ): number => {
         let gravity: number = 9.81;
         if (isImperial) gravity = 32.17;
         const sum = this._pipeSection.kValues.reduce((sum, k) => sum + k, 0);
         return (
-            (sum * this._pipeSection.targetFlowRate ** 2) /
+            (sum * flowRate ** 2) /
             ((2 * gravity * math.pi * this._pipeSection.diameter ** 2) / 4)
         );
     };
@@ -109,10 +115,5 @@ export default class Bernoullis {
                 this._pipeSection.kinematicViscosity,
             1e-6
         );
-    };
-
-    private generateFlowRange = (): Array<number> => {
-        const step = this._pipeSection.targetFlowRate / 10;
-        return Array.from({ length: 20 }, (_, i) => step * i);
     };
 }

@@ -6,7 +6,7 @@ export default class SerghidesApproximation implements Approximation {
         relativeRoughness: number,
         reynoldsNum: number
     ): number => {
-        if (reynoldsNum < 2300) return 64 / reynoldsNum;
+        if (reynoldsNum < 2300) return 64 / reynoldsNum; // Laminar flow
 
         const roughnessTerm: number = relativeRoughness / 3.7;
         const calculateTerm = (prev: number | null = null): number => {
@@ -15,7 +15,6 @@ export default class SerghidesApproximation implements Approximation {
                 : 12 / reynoldsNum;
             return -2 * math.log10(roughnessTerm + reynoldsTerm);
         };
-
         const a: number = calculateTerm(null);
         const b: number = calculateTerm(a);
         const c: number = calculateTerm(b);
@@ -31,7 +30,7 @@ export default class SerghidesApproximation implements Approximation {
                             .done()
                     )
                     .done(),
-                2
+                -2
             )
         );
     };

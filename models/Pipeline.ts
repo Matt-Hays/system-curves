@@ -1,43 +1,61 @@
 import PipeSection from './PipeSection';
+import { ApproximationMethod } from '~/models/enums/ApproximationMethod';
+import type Approximation from '~/models/interfaces/Approximation';
+import SerghidesApproximation from '~/models/SerghidesApproximation';
 
 export default class Pipeline {
-    private pipeSections: PipeSection[] = [];
-
-    constructor() {}
+    constructor(private pipeSections: PipeSection[] = []) {}
 
     /**
      * Calculates the total dynamic head (TDH) for the system.
      * @returns The maximum and minimum TDH values.
      */
-    public calcTDH = (): [number, number, number][] => {
-        if (this.pipeSections.length === 0) {
+    public calcTDH = (
+        targetFlowRate: number,
+        approximationMethod: ApproximationMethod = ApproximationMethod.SERGHIDE,
+        isImperial: boolean
+    ): Array<Array<number>> => {
+        if (this.pipeSections.length === 0)
             throw new Error('No pipe sections exist.');
+
+        let method: Approximation | null = null;
+        switch (approximationMethod) {
+            case ApproximationMethod.SERGHIDE:
+                method = new SerghidesApproximation();
+                break;
+            case ApproximationMethod.COLEBROOK:
+                throw Error('Colebook method not implemented.');
         }
 
+        if (!method) throw Error('No approximation method defined.');
+
+        const flowRates: Array<number> = this.generateFlowRange(targetFlowRate);
+
         // Assume all pipe sections have the same flow rate range
-        const flowRateCount = this.pipeSections[0].execute().length;
+        const flowRateCount: number = 20;
 
         // Initialize the system curve array
-        const systemCurve: [number, number, number][] = Array(
-            flowRateCount
-        ).fill([0, 0, 0]);
+        const systemCurve: Array<Array<number>> = Array(flowRateCount).fill([
+            0, 0,
+        ]);
 
         // Sum minTDH and maxTDH values for each flow rate across all pipe sections
         for (let i = 0; i < flowRateCount; i++) {
-            let cumulativeMinTDH = 0;
-            let cumulativeMaxTDH = 0;
+            let cumulativeTDH = 0;
             let flowRate = 0;
 
             for (const pipeSection of this.pipeSections) {
-                const [maxTDH, minTDH, currentFlowRate] =
-                    pipeSection.execute()[i];
-                cumulativeMinTDH += minTDH;
-                cumulativeMaxTDH += maxTDH;
+                const [tdh, currentFlowRate] = pipeSection.execute(
+                    flowRates,
+                    method,
+                    isImperial
+                )[i];
+                cumulativeTDH += tdh;
                 flowRate = currentFlowRate; // The flow rate is assumed identical across all pipe sections
             }
 
             // Store the result for this flow rate
-            systemCurve[i] = [cumulativeMaxTDH, cumulativeMinTDH, flowRate];
+            systemCurve[i] = [cumulativeTDH, flowRate];
         }
 
         return systemCurve;
@@ -84,4 +102,9 @@ export default class Pipeline {
      * @returns Array of pipe sections.
      */
     public getPipeSections = (): PipeSection[] => this.pipeSections;
+
+    private generateFlowRange = (targetFlowRate: number): Array<number> => {
+        const step = targetFlowRate / 10;
+        return Array.from({ length: 20 }, (_, i) => step * i);
+    };
 }

@@ -1,7 +1,5 @@
 import type Approximation from '~/models/interfaces/Approximation';
 import Bernoullis from '~/models/Bernoullis';
-import { ApproximationMethod } from '~/models/enums/ApproximationMethod';
-import SerghidesApproximation from '~/models/SerghidesApproximation';
 
 export default class PipeSection {
     constructor(
@@ -9,7 +7,6 @@ export default class PipeSection {
         private _finalPressure: number,
         private _initialVelocity: number,
         private _finalVelocity: number,
-        private _targetFlowRate: number,
         private _initialElevation: number,
         private _finalElevation: number,
         private _length: number,
@@ -29,21 +26,13 @@ export default class PipeSection {
     }
 
     execute = (
-        approximationMethod: ApproximationMethod = ApproximationMethod.SERGHIDE,
+        flowRates: Array<number>,
+        method: Approximation,
         isImperial: boolean = true
     ): Array<Array<number>> => {
-        let method: Approximation | null = null;
-        switch (approximationMethod) {
-            case ApproximationMethod.SERGHIDE:
-                method = new SerghidesApproximation();
-                break;
-            case ApproximationMethod.COLEBROOK:
-                throw Error('Colebook method not implemented.');
-        }
-
         if (!method) throw Error('No approximation method defined.');
 
-        return new Bernoullis(method, this).execute(isImperial);
+        return new Bernoullis(method, this).execute(flowRates, isImperial);
     };
 
     get initialPressure(): number {
@@ -76,14 +65,6 @@ export default class PipeSection {
 
     set finalVelocity(value: number) {
         this._finalVelocity = value;
-    }
-
-    get targetFlowRate(): number {
-        return this._targetFlowRate;
-    }
-
-    set targetFlowRate(value: number) {
-        this._targetFlowRate = value;
     }
 
     get initialElevation(): number {
