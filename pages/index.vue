@@ -1,63 +1,71 @@
 <script setup lang="ts">
-import { array, number, object } from 'yup';
-import System from '@/models/System';
+import { array, boolean, number, object, string } from 'yup';
 import type PipeSection from '~/models/PipeSection';
+import Pipeline from '~/models/Pipeline';
 import regression from 'regression';
 import { Chart, registerables } from 'chart.js';
+import { ApproximationMethod } from '~/models/enums/ApproximationMethod';
 
 Chart.register(...registerables);
 
-const pipeSectionSchema = object({
-    pressure_1: number().required(),
-    pressure_2: number().required(),
-    velocity_1: number().required(),
-    velocity_2: number().required(),
-    height_1_min: number().required(),
-    height_2_min: number().required(),
-    height_1_max: number().required(),
-    height_2_max: number().required(),
-    length: number().required().positive(),
-    diameter: number().required().positive(),
-    absolute_roughness: number().required().positive(),
-    kinematic_viscosity: number().required().positive(),
+let chartInstance: Chart | null = null;
+
+const approxMethods = ['serghide', 'colebrook'];
+
+const pipelineSchema = object({
     target_flow_rate: number().required().positive(),
-    k_values: array().of(number().positive().nullable()).required(),
+    is_imperial: boolean().required(),
+    approximation_method: string().required(),
+});
+
+const pipelineList = reactive({
+    target_flow_rate: undefined,
+    is_imperial: undefined,
+    approximation_method: undefined,
+});
+
+const pipeSectionSchema = object({
+    initial_pressure: number().required(),
+    final_pressure: number().required(),
+    initial_velocity: number().required(),
+    final_velocity: number().required(),
+    initial_elevation: number().required(),
+    final_elevation: number().required(),
+    length: number().required(),
+    diameter: number().required(),
+    absolute_roughness: number().required(),
+    kinematic_viscosity: number().required(),
+    k_values: array(number()).required(),
 });
 
 const pipeSectionList = reactive([
     {
-        pressure_1: undefined,
-        pressure_2: undefined,
-        velocity_1: undefined,
-        velocity_2: undefined,
-        height_1_min: undefined,
-        height_2_min: undefined,
-        height_1_max: undefined,
-        height_2_max: undefined,
+        initial_pressure: undefined,
+        final_pressure: undefined,
+        initial_velocity: undefined,
+        final_velocity: undefined,
+        initial_elevation: undefined,
+        final_elevation: undefined,
         length: undefined,
         diameter: undefined,
         absolute_roughness: undefined,
         kinematic_viscosity: undefined,
-        target_flow_rate: undefined,
-        k_values: [] as number[],
+        k_values: [] as Array<number>,
     },
 ]);
 
 function addPipeSection() {
     pipeSectionList.push({
-        pressure_1: undefined,
-        pressure_2: undefined,
-        velocity_1: undefined,
-        velocity_2: undefined,
-        height_1_min: undefined,
-        height_2_min: undefined,
-        height_1_max: undefined,
-        height_2_max: undefined,
+        initial_pressure: undefined,
+        final_pressure: undefined,
+        initial_velocity: undefined,
+        final_velocity: undefined,
+        initial_elevation: undefined,
+        final_elevation: undefined,
         length: undefined,
         diameter: undefined,
         absolute_roughness: undefined,
         kinematic_viscosity: undefined,
-        target_flow_rate: undefined,
         k_values: [],
     });
 }
@@ -75,38 +83,52 @@ function removeKValue(pipeSectionIndex: number, kValueIndex: number) {
 }
 
 async function submitAll() {
-    const system = new System();
+    const pipeline = new Pipeline();
 
     for (const pipeSection of pipeSectionList) {
-        const validKValues = pipeSection.k_values.filter(
-            (v): v is number => v !== null && v !== undefined
-        );
-
         const pipeSectionParams: ConstructorParameters<typeof PipeSection> = [
-            pipeSection.pressure_1!,
-            pipeSection.pressure_2!,
-            pipeSection.velocity_1!,
-            pipeSection.velocity_2!,
-            pipeSection.height_1_min!,
-            pipeSection.height_1_max!,
-            pipeSection.height_2_min!,
-            pipeSection.height_2_max!,
+            pipeSection.initial_pressure!,
+            pipeSection.final_pressure!,
+            pipeSection.initial_velocity!,
+            pipeSection.final_velocity!,
+            pipeSection.initial_elevation!,
+            pipeSection.final_elevation!,
             pipeSection.length!,
             pipeSection.diameter!,
             pipeSection.absolute_roughness!,
             pipeSection.kinematic_viscosity!,
-            pipeSection.target_flow_rate!,
-            validKValues,
+            pipeSection.k_values,
         ];
 
-        system.addPipeSection(pipeSectionParams);
+        pipeline.addPipeSection(pipeSectionParams);
     }
 
-    const tdhData = system.calcTDH();
+    if (
+        pipelineList.target_flow_rate == undefined ||
+        pipelineList.is_imperial == undefined
+    )
+        throw Error('Required attributes not set.');
+
+    let method: ApproximationMethod | null = null;
+    switch (pipelineList.approximation_method!) {
+        case 'serghide':
+            method = ApproximationMethod.SERGHIDE;
+            break;
+        case 'colebrook':
+            method = ApproximationMethod.COLEBROOK;
+            break;
+        default:
+            throw Error('Unsupported approximation method.');
+    }
+    const tdhData = pipeline.execute(
+        pipelineList.target_flow_rate,
+        method,
+        pipelineList.is_imperial
+    );
     console.log('System TDH:', tdhData);
 
     // Extract x (flowRates) and y (maxTDHs) for plotting
-    const flowRates = tdhData.map(([_, __, flowRate]) => flowRate);
+    const flowRates = tdhData.map(([_, flowRate]) => flowRate);
     const maxTDHs = tdhData.map(([maxTDH]) => maxTDH);
 
     const dataForRegression: [number, number][] = flowRates.map((x, i) => [
@@ -128,7 +150,9 @@ async function submitAll() {
     // Create or update the Chart.js chart
     const ctx = document.getElementById('chartCanvas') as HTMLCanvasElement;
 
-    new Chart(ctx, {
+    if (chartInstance) chartInstance.destroy();
+
+    chartInstance = new Chart(ctx, {
         type: 'scatter',
         data: {
             datasets: [
@@ -184,10 +208,50 @@ async function submitAll() {
 
 <template>
     <div>
+        <h3 class="pl-4 pt-4">System Parameters</h3>
+        <UForm
+            :schema="pipelineSchema"
+            :state="pipelineList"
+            class="grid grid-cols-7 gap-4 p-4"
+        >
+            <UFormGroup
+                label="Target Flow Rate"
+                name="target_flow_rate"
+                class="w-sm"
+            >
+                <UInput
+                    v-model="pipelineList.target_flow_rate"
+                    type="number"
+                    step="any"
+                />
+            </UFormGroup>
+            <UFormGroup
+                label="Approximation Method"
+                name="approximation_method"
+            >
+                <USelect
+                    v-model="pipelineList.approximation_method"
+                    name="approximation_method"
+                    :options="approxMethods"
+                />
+            </UFormGroup>
+            <UFormGroup label="Imperial Units" name="is_imperial">
+                <UCheckbox
+                    v-model="pipelineList.is_imperial"
+                    name="is_imperial"
+                />
+            </UFormGroup>
+            <div class="col-start-7 flex justify-end items-center">
+                <UButton type="button" @click="submitAll"
+                    >Generate System Curve</UButton
+                >
+            </div>
+        </UForm>
+        <hr class="m-4" />
         <div
             v-for="(pipeSection, index) in pipeSectionList"
             :key="index"
-            class="border p-4 mb-4"
+            class="p-4 mb-4"
         >
             <h3>Pipe Section {{ index + 1 }}</h3>
             <UForm
@@ -198,7 +262,7 @@ async function submitAll() {
             >
                 <UFormGroup label="Pressure 1" name="pressure_1">
                     <UInput
-                        v-model="pipeSection.pressure_1"
+                        v-model="pipeSection.initial_pressure"
                         type="number"
                         step="any"
                     />
@@ -206,7 +270,7 @@ async function submitAll() {
 
                 <UFormGroup label="Pressure 2" name="pressure_2">
                     <UInput
-                        v-model="pipeSection.pressure_2"
+                        v-model="pipeSection.final_pressure"
                         type="number"
                         step="any"
                     />
@@ -214,7 +278,7 @@ async function submitAll() {
 
                 <UFormGroup label="Velocity 1" name="velocity_1">
                     <UInput
-                        v-model="pipeSection.velocity_1"
+                        v-model="pipeSection.initial_velocity"
                         type="number"
                         step="any"
                     />
@@ -222,7 +286,7 @@ async function submitAll() {
 
                 <UFormGroup label="Velocity 2" name="velocity_2">
                     <UInput
-                        v-model="pipeSection.velocity_2"
+                        v-model="pipeSection.final_velocity"
                         type="number"
                         step="any"
                     />
@@ -230,7 +294,7 @@ async function submitAll() {
 
                 <UFormGroup label="Height 1 Min" name="height_1_min">
                     <UInput
-                        v-model="pipeSection.height_1_min"
+                        v-model="pipeSection.initial_elevation"
                         type="number"
                         step="any"
                     />
@@ -238,23 +302,7 @@ async function submitAll() {
 
                 <UFormGroup label="Height 2 Min" name="height_2_min">
                     <UInput
-                        v-model="pipeSection.height_2_min"
-                        type="number"
-                        step="any"
-                    />
-                </UFormGroup>
-
-                <UFormGroup label="Height 1 Max" name="height_1_max">
-                    <UInput
-                        v-model="pipeSection.height_1_max"
-                        type="number"
-                        step="any"
-                    />
-                </UFormGroup>
-
-                <UFormGroup label="Height 2 Max" name="height_2_max">
-                    <UInput
-                        v-model="pipeSection.height_2_max"
+                        v-model="pipeSection.final_elevation"
                         type="number"
                         step="any"
                     />
@@ -298,14 +346,6 @@ async function submitAll() {
                     />
                 </UFormGroup>
 
-                <UFormGroup label="Target Flow Rate" name="target_flow_rate">
-                    <UInput
-                        v-model="pipeSection.target_flow_rate"
-                        type="number"
-                        step="any"
-                    />
-                </UFormGroup>
-
                 <UFormGroup label="K Values" name="k_values">
                     <div>
                         <div
@@ -343,12 +383,12 @@ async function submitAll() {
                     >Add Pipe Section</UButton
                 >
             </div>
-            <div class="col-start-1 flex justify-normal items-center ml-6">
-                <UButton type="button" @click="submitAll">Calculate</UButton>
-            </div>
         </div>
     </div>
-    <canvas id="chartCanvas" style="width: 100%; height: 400px"></canvas>
+    <div
+        class="chart-container"
+        style="height: 400px; position: relative; width: 80vw"
+    >
+        <canvas id="chartCanvas"></canvas>
+    </div>
 </template>
-
-<!--Chart canvas with id 0 must be destroyed before it can be resued-->

@@ -10,7 +10,7 @@ export default class Pipeline {
      * Calculates the total dynamic head (TDH) for the system.
      * @returns The maximum and minimum TDH values.
      */
-    public calcTDH = (
+    public execute = (
         targetFlowRate: number,
         approximationMethod: ApproximationMethod = ApproximationMethod.SERGHIDE,
         isImperial: boolean
