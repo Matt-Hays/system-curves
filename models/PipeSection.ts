@@ -1,128 +1,144 @@
-import * as math from 'mathjs';
+import type Approximation from '~/models/interfaces/Approximation';
+import Bernoullis from '~/models/Bernoullis';
+import { ApproximationMethod } from '~/models/enums/ApproximationMethod';
+import SerghidesApproximation from '~/models/SerghidesApproximation';
 
 export default class PipeSection {
-	private hydraulicArea: number;
-	private relativeRoughness: number;
-	private hasVelocityHead: boolean;
+    constructor(
+        private _initialPressure: number,
+        private _finalPressure: number,
+        private _initialVelocity: number,
+        private _finalVelocity: number,
+        private _targetFlowRate: number,
+        private _initialElevation: number,
+        private _finalElevation: number,
+        private _length: number,
+        private _diameter: number,
+        private _absoluteRoughness: number,
+        private _kinematicViscosity: number,
+        private _kValues: Array<number>
+    ) {
+        if (this._diameter < 0)
+            throw Error('Pipe diameter must be a positive integer');
+        if (this._length <= 0)
+            throw Error('Pipe length must be a positive integer');
+        if (this._absoluteRoughness <= 0)
+            throw Error('Pipe absoluteRoughness must be a positive integer');
+        if (this._kinematicViscosity <= 0)
+            throw Error('Pipe kinematicViscosity must be a positive integer');
+    }
 
-	constructor(
-		private p1: number,
-		private p2: number,
-		private v1: number,
-		private v2: number,
-		private z1_min: number,
-		private z2_min: number,
-		private z1_max: number,
-		private z2_max: number,
-		private length: number,
-		private diameter: number,
-		private absoluteRoughness: number,
-		private kinematicViscOfFluid: number,
-		private targetFlowRate: number,
-		private appurtenanceKValues: number[]
-	) {
-		if (this.diameter <= 0) throw new Error('Pipe diameter must be greater than 0.');
-		if (this.length <= 0) throw new Error('Pipe length must be greater than 0.');
-		if (this.absoluteRoughness < 0) throw new Error('Absolute roughness must be non-negative.');
-		if (this.kinematicViscOfFluid <= 0) throw new Error('Kinematic viscosity must be greater than 0.');
-		if (!this.appurtenanceKValues.length) throw new Error('Appurtenance K values must not be empty.');
-		if (this.z2_max < this.z1_min || this.z2_min < this.z1_max) {
-			throw new Error('Elevation ranges are invalid.');
-		}
+    execute = (
+        approximationMethod: ApproximationMethod = ApproximationMethod.SERGHIDE,
+        isImperial: boolean = true
+    ): Array<Array<number>> => {
+        let method: Approximation | null = null;
+        switch (approximationMethod) {
+            case ApproximationMethod.SERGHIDE:
+                method = new SerghidesApproximation();
+                break;
+            case ApproximationMethod.COLEBROOK:
+                throw Error('Colebook method not implemented.');
+        }
 
-		this.hydraulicArea = (math.pi * Math.pow(this.diameter, 2)) / 4;
-		this.relativeRoughness = this.absoluteRoughness / this.diameter;
-		this.hasVelocityHead = this.v2 !== this.v1;
-	}
+        if (!method) throw Error('No approximation method defined.');
 
-	/**
-	 * Calculates system curve data points.
-	 * @returns An array of [maxTDH, minTDH, flowRate].
-	 */
-	public execute = (): [number, number, number][] => {
-		return this.generateFlowRange().map((flowRate) => {
-			const [maxTDH, minTDH] = this.calculateTDH(flowRate);
-			return [maxTDH, minTDH, flowRate];
-		});
-	};
+        return new Bernoullis(method, this).execute(isImperial);
+    };
 
-	/**
-	 * Calculates a range of flow rates where the target flow rate is the median value.
-	 * @returns An array containing a equally distributed range of flow rates.
-	 */
-	private generateFlowRange = (): number[] => {
-		const step = this.targetFlowRate / 20;
-		return Array.from({ length: 20 }, (_, i) => step * (i + 1));
-	};
+    get initialPressure(): number {
+        return this._initialPressure;
+    }
 
-	/**
-	 * Calculates the head loss for a given flow rate.
-	 * @param flowRate The flow rate to calculate the head loss for.
-	 * @returns An array containing maximum and minimum TDH values as well as the associated flow rate.
-	 */
-	private calculateTDH = (flowRate: number): [number, number] => {
-		const adjustedFlowRate = Math.max(flowRate, 1e-6);
-		const pressureHead = (this.p2 - this.p1) * 2.31;
-		const velocityHead = this.hasVelocityHead
-			? Math.pow(adjustedFlowRate, 2) / (2 * 32.17 * Math.pow(this.hydraulicArea, 2))
-			: 0;
-		const staticHeadMax = this.z2_max - this.z1_min;
-		const staticHeadMin = this.z2_min - this.z1_max;
-		const majorLosses = this.calculateMajorLosses(adjustedFlowRate);
-		const minorLosses = this.calculateMinorLosses(adjustedFlowRate);
-		const totalLosses = majorLosses + minorLosses + velocityHead + pressureHead;
-		return [staticHeadMax + totalLosses, staticHeadMin + totalLosses];
-	};
+    set initialPressure(value: number) {
+        this._initialPressure = value;
+    }
 
-	/**
-	 * Calcuates the major losses for a given flow rate.
-	 * @param flowRate The flow rate to calculate the major losses for.
-	 * @returns Major head loss value.
-	 */
-	private calculateMajorLosses = (flowRate: number): number => {
-		const frictionFactor = this.calculateFrictionFactor(flowRate);
-		return (
-			(frictionFactor * (this.length / this.diameter) * Math.pow(flowRate, 2)) /
-			(2 * 32.17 * Math.pow(this.hydraulicArea, 2))
-		);
-	};
+    get finalPressure(): number {
+        return this._finalPressure;
+    }
 
-	/**
-	 * Calculates the minor losses for a given flow rate.
-	 * @param flowRate The flow rate to calculate the minor losses for.
-	 * @returns Minor head loss value.
-	 */
-	private calculateMinorLosses = (flowRate: number): number => {
-		const kSum = this.appurtenanceKValues.reduce((sum, k) => sum + k, 0);
-		return (kSum * Math.pow(flowRate, 2)) / (2 * 32.17 * Math.pow(this.hydraulicArea, 2));
-	};
+    set finalPressure(value: number) {
+        this._finalPressure = value;
+    }
 
-	/**
-	 * Calculates the friction factor for a given flow rate using Serghide's approximation method.
-	 * @param flowRate The flow rate to calculate the friction factor for.
-	 * @returns The Serghide's friction factor approximation.
-	 */
-	private calculateFrictionFactor = (flowRate: number): number => {
-		const reynoldsNumber = Math.max(
-			(flowRate / this.hydraulicArea) * (this.diameter / this.kinematicViscOfFluid),
-			1e-6
-		);
+    get initialVelocity(): number {
+        return this._initialVelocity;
+    }
 
-		if (reynoldsNumber < 2300) {
-			return 64 / reynoldsNumber;
-		}
+    set initialVelocity(value: number) {
+        this._initialVelocity = value;
+    }
 
-		const roughnessTerm = this.relativeRoughness / 3.7;
+    get finalVelocity(): number {
+        return this._finalVelocity;
+    }
 
-		const calcTerm = (prev: number | null): number => {
-			const reynoldsTerm = prev ? (2.51 / reynoldsNumber) * prev : 12 / reynoldsNumber;
-			return -2 * Math.log10(roughnessTerm + reynoldsTerm);
-		};
+    set finalVelocity(value: number) {
+        this._finalVelocity = value;
+    }
 
-		const a = calcTerm(null);
-		const b = calcTerm(a);
-		const c = calcTerm(b);
+    get targetFlowRate(): number {
+        return this._targetFlowRate;
+    }
 
-		return Math.pow(a - Math.pow(b - a, 2) / (c - 2 * b + a), -2);
-	};
+    set targetFlowRate(value: number) {
+        this._targetFlowRate = value;
+    }
+
+    get initialElevation(): number {
+        return this._initialElevation;
+    }
+
+    set initialElevation(value: number) {
+        this._initialElevation = value;
+    }
+
+    get finalElevation(): number {
+        return this._finalElevation;
+    }
+
+    set finalElevation(value: number) {
+        this._finalElevation = value;
+    }
+
+    get length(): number {
+        return this._length;
+    }
+
+    set length(value: number) {
+        this._length = value;
+    }
+
+    get diameter(): number {
+        return this._diameter;
+    }
+
+    set diameter(value: number) {
+        this._diameter = value;
+    }
+
+    get absoluteRoughness(): number {
+        return this._absoluteRoughness;
+    }
+
+    set absoluteRoughness(value: number) {
+        this._absoluteRoughness = value;
+    }
+
+    get kinematicViscosity(): number {
+        return this._kinematicViscosity;
+    }
+
+    set kinematicViscosity(value: number) {
+        this._kinematicViscosity = value;
+    }
+
+    get kValues(): Array<number> {
+        return this._kValues;
+    }
+
+    set kValues(value: Array<number>) {
+        this._kValues = value;
+    }
 }
