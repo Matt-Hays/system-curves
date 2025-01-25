@@ -16,9 +16,12 @@
     "regression": "^2.0.1",
     "vue": "latest",
     "vue-chartjs": "^5.3.2",
-    "vue-router": "latest"
+    "vue-router": "latest",
+    "yup": "^1.6.1"
   },
   "devDependencies": {
+    "@types/regression": "^2.0.6",
+    "prettier": "3.4.2",
     "typescript": "^5.7.3",
     "vue-tsc": "^2.1.10"
   }
